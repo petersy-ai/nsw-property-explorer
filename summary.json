@@ -1,0 +1,27 @@
+{
+  "total_properties": 10309,
+  "processing_time_seconds": 11.1,
+  "area_stats": {
+    "min": 10.0,
+    "max": 3190.3,
+    "mean": 84.1,
+    "median": 39.0
+  },
+  "distance_stats": {
+    "min": 30.4,
+    "max": 407.6,
+    "mean": 251.0,
+    "median": 260.3
+  },
+  "regions": {
+    "Hunter Valley": 2449,
+    "Murray": 1044,
+    "Central West": 401,
+    "Central Tablelands": 2145,
+    "Illawarra": 486,
+    "Central Coast": 1986,
+    "Riverina": 1707,
+    "South Coast": 91
+  },
+  "file_size_estimate": "1978KB"
+}
