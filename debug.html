@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NSW Property Data - Debug Version</title>
+    <link rel="stylesheet" href="leaflet.css" />
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            background: #f0f0f0;
+        }
+        
+        .debug-panel {
+            background: #000;
+            color: #0f0;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+            border-bottom: 2px solid #333;
+        }
+        
+        .header {
+            background: #2c3e50;
+            color: white;
+            padding: 15px;
+            text-align: center;
+        }
+        
+        .stats {
+            background: white;
+            padding: 10px;
+            margin: 10px;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        
+        #map {
+            height: 400px;
+            margin: 10px;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .error {
+            background: #ffebee;
+            color: #c62828;
+            padding: 15px;
+            margin: 10px;
+            border-radius: 5px;
+            border-left: 4px solid #c62828;
+        }
+    </style>
+</head>
+<body>
+    <div class="debug-panel" id="debug-log">
+        <div>🔍 DEBUG MODE - Leaflet Loading Analysis</div>
+    </div>
+    
+    <div class="header">
+        <h1>NSW Property Data - Debug Version</h1>
+        <p>Diagnosing Leaflet.js loading issues</p>
+    </div>
+    
+    <div class="stats" id="stats">
+        <div>Initializing diagnostics...</div>
+    </div>
+    
+    <div id="map"></div>
+
+    <script>
+        // Debug logging system
+        const debugLog = document.getElementById('debug-log');
+        
+        function log(message, type = 'info') {
+            const timestamp = new Date().toISOString().substr(11, 12);
+            const color = type === 'error' ? '#f00' : type === 'success' ? '#0f0' : '#fff';
+            const logEntry = document.createElement('div');
+            logEntry.style.color = color;
+            logEntry.innerHTML = `[${timestamp}] ${message}`;
+            debugLog.appendChild(logEntry);
+            debugLog.scrollTop = debugLog.scrollHeight;
+            console.log(`[${timestamp}] ${message}`);
+        }
+
+        // Phase 1: Environment Analysis
+        log('🚀 Starting Leaflet diagnostic sequence');
+        log(`📊 User Agent: ${navigator.userAgent}`);
+        log(`🌐 Location: ${window.location.href}`);
+        log(`📄 Document Ready State: ${document.readyState}`);
+
+        // Phase 2: Script Loading Analysis
+        log('📦 Analyzing script loading...');
+        
+        // Check if Leaflet is already available
+        if (typeof L !== 'undefined') {
+            log('✅ Leaflet global variable exists', 'success');
+            log(`📋 Leaflet version: ${L.version || 'unknown'}`);
+            log(`🔧 L.map function: ${typeof L.map}`);
+        } else {
+            log('❌ Leaflet global variable not found', 'error');
+        }
+
+        // Phase 3: File Integrity Check
+        log('🔍 Checking file integrity...');
+        
+        fetch('leaflet.js')
+            .then(response => {
+                log(`📁 Leaflet.js response status: ${response.status}`);
+                log(`📏 Content length: ${response.headers.get('content-length') || 'unknown'}`);
+                log(`📋 Content type: ${response.headers.get('content-type') || 'unknown'}`);
+                return response.text();
+            })
+            .then(content => {
+                log(`📊 File size: ${content.length} characters`);
+                log(`🔍 Contains 'L.map': ${content.includes('L.map')}`);
+                log(`🔍 Contains 'L.version': ${content.includes('L.version')}`);
+                log(`🔍 File starts with: "${content.substring(0, 50)}..."`);
+                log(`🔍 File ends with: "...${content.substring(content.length - 50)}"`);
+            })
+            .catch(error => {
+                log(`❌ Failed to fetch leaflet.js: ${error.message}`, 'error');
+            });
+
+        // Phase 4: CSS Loading Check
+        fetch('leaflet.css')
+            .then(response => {
+                log(`🎨 Leaflet.css response status: ${response.status}`);
+                return response.text();
+            })
+            .then(content => {
+                log(`🎨 CSS file size: ${content.length} characters`);
+                log(`🔍 Contains '.leaflet-': ${content.includes('.leaflet-')}`);
+            })
+            .catch(error => {
+                log(`❌ Failed to fetch leaflet.css: ${error.message}`, 'error');
+            });
+
+        // Phase 5: Script Load Event Monitoring
+        const leafletScript = document.createElement('script');
+        leafletScript.src = 'leaflet.js';
+        
+        leafletScript.onload = function() {
+            log('✅ Leaflet script onload event fired', 'success');
+            
+            // Immediate check
+            if (typeof L !== 'undefined') {
+                log('✅ Leaflet available immediately after load', 'success');
+                log(`📋 Leaflet version: ${L.version || 'unknown'}`);
+                log(`🔧 L.map type: ${typeof L.map}`);
+                
+                if (typeof L.map === 'function') {
+                    log('✅ L.map is a function - ready to use!', 'success');
+                    initializeApp();
+                } else {
+                    log('❌ L.map is not a function', 'error');
+                    log(`🔍 L object keys: ${Object.keys(L).slice(0, 10).join(', ')}`);
+                }
+            } else {
+                log('❌ Leaflet still not available after load event', 'error');
+            }
+        };
+        
+        leafletScript.onerror = function(error) {
+            log(`❌ Leaflet script onerror event: ${error}`, 'error');
+        };
+        
+        log('📦 Adding Leaflet script to document...');
+        document.head.appendChild(leafletScript);
+
+        // Phase 6: Polling Check
+        let pollCount = 0;
+        const maxPolls = 50;
+        
+        function pollForLeaflet() {
+            pollCount++;
+            log(`🔄 Poll ${pollCount}/${maxPolls}: Checking Leaflet availability...`);
+            
+            if (typeof L !== 'undefined' && typeof L.map === 'function') {
+                log('✅ Leaflet ready via polling!', 'success');
+                initializeApp();
+                return;
+            }
+            
+            if (pollCount < maxPolls) {
+                setTimeout(pollForLeaflet, 100);
+            } else {
+                log('❌ Polling timeout - Leaflet never became available', 'error');
+                showFinalDiagnostic();
+            }
+        }
+        
+        // Start polling after a short delay
+        setTimeout(pollForLeaflet, 500);
+
+        // Application initialization
+        function initializeApp() {
+            log('🎯 Starting application initialization...', 'success');
+            
+            try {
+                // Test basic Leaflet functionality
+                log('🗺️ Testing L.map creation...');
+                const testMap = L.map('map').setView([51.505, -0.09], 13);
+                log('✅ Map created successfully!', 'success');
+                
+                // Test tile layer
+                log('🌍 Adding tile layer...');
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '© OpenStreetMap contributors'
+                }).addTo(testMap);
+                log('✅ Tile layer added successfully!', 'success');
+                
+                // Update stats
+                document.getElementById('stats').innerHTML = `
+                    <span style="color: green;">✅ Leaflet loaded successfully!</span><br>
+                    <span>Version: ${L.version || 'unknown'}</span><br>
+                    <span>Map initialized and ready</span>
+                `;
+                
+            } catch (error) {
+                log(`❌ Application initialization failed: ${error.message}`, 'error');
+                log(`🔍 Error stack: ${error.stack}`, 'error');
+            }
+        }
+
+        // Final diagnostic if everything fails
+        function showFinalDiagnostic() {
+            log('📋 FINAL DIAGNOSTIC SUMMARY:', 'error');
+            log(`🌐 Window.L exists: ${typeof window.L !== 'undefined'}`, 'error');
+            log(`🔧 Global L exists: ${typeof L !== 'undefined'}`, 'error');
+            
+            if (typeof L !== 'undefined') {
+                log(`📋 L object type: ${typeof L}`, 'error');
+                log(`🔍 L object keys: ${Object.keys(L).join(', ')}`, 'error');
+                log(`🔧 L.map exists: ${typeof L.map !== 'undefined'}`, 'error');
+                log(`🔧 L.map type: ${typeof L.map}`, 'error');
+            }
+            
+            // Check for any script errors
+            log('🔍 Checking for script elements...');
+            const scripts = document.querySelectorAll('script[src*="leaflet"]');
+            log(`📦 Found ${scripts.length} Leaflet script elements`);
+            
+            document.getElementById('stats').innerHTML = `
+                <div class="error">
+                    ❌ Leaflet failed to load properly<br>
+                    Check the debug log above for details
+                </div>
+            `;
+        }
+
+        // Global error handler
+        window.addEventListener('error', function(event) {
+            log(`❌ Global error: ${event.message} at ${event.filename}:${event.lineno}`, 'error');
+        });
+
+        // Document ready check
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function() {
+                log('📄 DOMContentLoaded event fired');
+            });
+        } else {
+            log('📄 Document already ready');
+        }
+
+        log('🔍 Diagnostic setup complete - monitoring Leaflet loading...');
+    </script>
+</body>
+</html>
+

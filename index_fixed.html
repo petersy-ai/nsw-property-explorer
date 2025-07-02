@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NSW Property Data - Basic Viewer</title>
+    <link rel="stylesheet" href="leaflet.css" />
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            background: #f0f0f0;
+        }
+        
+        .header {
+            background: #2c3e50;
+            color: white;
+            padding: 15px;
+            text-align: center;
+        }
+        
+        .stats {
+            background: white;
+            padding: 10px;
+            margin: 10px;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        
+        .stats span {
+            display: inline-block;
+            margin: 0 20px;
+            font-weight: bold;
+        }
+        
+        #map {
+            height: 600px;
+            margin: 10px;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .property-list {
+            background: white;
+            margin: 10px;
+            padding: 15px;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .property-item {
+            padding: 8px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+        }
+        
+        .property-item:hover {
+            background: #f8f9fa;
+        }
+        
+        .property-item.selected {
+            background: #e3f2fd;
+            border-left: 4px solid #2196f3;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 50px;
+            color: #666;
+        }
+        
+        .error {
+            background: #ffebee;
+            color: #c62828;
+            padding: 15px;
+            margin: 10px;
+            border-radius: 5px;
+            border-left: 4px solid #c62828;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>NSW Property Data - Basic Viewer</h1>
+        <p>Real NSW cadastral data for properties 50+ hectares, 100-400km from Sydney</p>
+    </div>
+    
+    <div class="stats" id="stats">
+        <div class="loading">Loading data...</div>
+    </div>
+    
+    <div id="map"></div>
+    
+    <div class="property-list">
+        <h3>Properties (Top 20 by Size)</h3>
+        <div id="property-list-content">
+            <div class="loading">Loading properties...</div>
+        </div>
+    </div>
+
+    <script src="leaflet.js"></script>
+    <script>
+        let map;
+        let properties = [];
+        let markers = [];
+        let selectedProperty = null;
+        let initialized = false; // Flag to prevent duplicate initialization
+
+        // Single initialization function
+        async function init() {
+            // Prevent duplicate initialization
+            if (initialized) {
+                console.log('Application already initialized, skipping...');
+                return;
+            }
+            
+            try {
+                console.log('Starting application initialization...');
+                
+                // Check if Leaflet is available
+                if (typeof L === 'undefined' || typeof L.map !== 'function') {
+                    throw new Error('Leaflet library not available');
+                }
+                
+                console.log('Leaflet available, version:', L.version);
+                
+                // Mark as initialized immediately to prevent race conditions
+                initialized = true;
+                
+                console.log('Loading property data...');
+                await loadData();
+                
+                console.log('Initializing map...');
+                initMap();
+                
+                console.log('Updating displays...');
+                updateStats();
+                updatePropertyList();
+                addMarkersToMap();
+                
+                console.log('Initialization complete!');
+                
+            } catch (error) {
+                console.error('Initialization error:', error);
+                initialized = false; // Reset flag on error
+                showError('Failed to load application: ' + error.message);
+            }
+        }
+
+        // Load property data
+        async function loadData() {
+            try {
+                const response = await fetch('properties.json');
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                properties = await response.json();
+                console.log(`Loaded ${properties.length} properties`);
+                
+                if (properties.length === 0) {
+                    throw new Error('No properties found in data file');
+                }
+                
+                // Validate data structure
+                const firstProperty = properties[0];
+                const requiredFields = ['lat', 'lon', 'area', 'distance'];
+                for (const field of requiredFields) {
+                    if (!(field in firstProperty)) {
+                        throw new Error(`Missing required field: ${field}`);
+                    }
+                }
+                
+            } catch (error) {
+                console.error('Data loading error:', error);
+                throw error;
+            }
+        }
+
+        // Initialize the map
+        function initMap() {
+            // Create map centered on NSW
+            map = L.map('map').setView([-32.0, 152.0], 7);
+            
+            // Add OpenStreetMap tiles
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors'
+            }).addTo(map);
+            
+            // Add Sydney marker for reference
+            L.marker([-33.8688, 151.2093])
+                .addTo(map)
+                .bindPopup('<b>Sydney CBD</b><br>Reference point for distances')
+                .openPopup();
+        }
+
+        // Add property markers to map
+        function addMarkersToMap() {
+            console.log('Adding markers to map...');
+            
+            // Clear existing markers
+            markers.forEach(marker => map.removeLayer(marker));
+            markers = [];
+            
+            // Create markers for all properties
+            properties.forEach((property, index) => {
+                try {
+                    // Color code by size
+                    let color = 'blue';
+                    if (property.area >= 500) color = 'red';
+                    else if (property.area >= 200) color = 'orange';
+                    else if (property.area >= 100) color = 'green';
+                    
+                    const marker = L.circleMarker([property.lat, property.lon], {
+                        radius: Math.min(8, Math.max(3, property.area / 100)),
+                        fillColor: color,
+                        color: 'white',
+                        weight: 1,
+                        opacity: 1,
+                        fillOpacity: 0.7
+                    });
+                    
+                    // Add popup with property info
+                    marker.bindPopup(`
+                        <b>Property #${property.rank || index + 1}</b><br>
+                        <strong>Size:</strong> ${property.area} hectares<br>
+                        <strong>Distance:</strong> ${property.distance} km from Sydney<br>
+                        ${property.lganame ? `<strong>LGA:</strong> ${property.lganame}<br>` : ''}
+                        ${property.lotidstring ? `<strong>Lot:</strong> ${property.lotidstring}<br>` : ''}
+                    `);
+                    
+                    // Add click handler
+                    marker.on('click', () => selectProperty(property, index));
+                    
+                    marker.addTo(map);
+                    markers.push(marker);
+                    
+                } catch (error) {
+                    console.error(`Error creating marker for property ${index}:`, error);
+                }
+            });
+            
+            console.log(`Added ${markers.length} markers to map`);
+            
+            // Fit map to show all properties
+            if (markers.length > 0) {
+                const group = new L.featureGroup(markers);
+                map.fitBounds(group.getBounds().pad(0.1));
+            }
+        }
+
+        // Update statistics display
+        function updateStats() {
+            const statsDiv = document.getElementById('stats');
+            
+            if (properties.length === 0) {
+                statsDiv.innerHTML = '<div class="error">No properties loaded</div>';
+                return;
+            }
+            
+            const totalProperties = properties.length;
+            const avgArea = (properties.reduce((sum, p) => sum + p.area, 0) / totalProperties).toFixed(1);
+            const avgDistance = (properties.reduce((sum, p) => sum + p.distance, 0) / totalProperties).toFixed(1);
+            const maxArea = Math.max(...properties.map(p => p.area)).toFixed(1);
+            const minArea = Math.min(...properties.map(p => p.area)).toFixed(1);
+            
+            statsDiv.innerHTML = `
+                <span>Total Properties: ${totalProperties}</span>
+                <span>Size Range: ${minArea} - ${maxArea} ha</span>
+                <span>Avg Size: ${avgArea} ha</span>
+                <span>Avg Distance: ${avgDistance} km</span>
+            `;
+        }
+
+        // Update property list
+        function updatePropertyList() {
+            const listDiv = document.getElementById('property-list-content');
+            
+            if (properties.length === 0) {
+                listDiv.innerHTML = '<div class="error">No properties to display</div>';
+                return;
+            }
+            
+            // Show top 20 properties by size
+            const topProperties = properties.slice(0, 20);
+            
+            listDiv.innerHTML = topProperties.map((property, index) => `
+                <div class="property-item" onclick="selectProperty(${JSON.stringify(property).replace(/"/g, '&quot;')}, ${index})" id="property-${index}">
+                    <strong>#${property.rank || index + 1}</strong> - 
+                    ${property.area} hectares, 
+                    ${property.distance} km from Sydney
+                    ${property.lganame ? `<br><small>LGA: ${property.lganame}</small>` : ''}
+                </div>
+            `).join('');
+        }
+
+        // Select a property
+        function selectProperty(property, index) {
+            console.log('Selected property:', property);
+            
+            // Update selected property
+            selectedProperty = property;
+            
+            // Update UI
+            document.querySelectorAll('.property-item').forEach(item => {
+                item.classList.remove('selected');
+            });
+            
+            const propertyElement = document.getElementById(`property-${index}`);
+            if (propertyElement) {
+                propertyElement.classList.add('selected');
+            }
+            
+            // Center map on property
+            map.setView([property.lat, property.lon], 12);
+            
+            // Open popup for the corresponding marker
+            const marker = markers[index];
+            if (marker) {
+                marker.openPopup();
+            }
+        }
+
+        // Show error message
+        function showError(message) {
+            const statsDiv = document.getElementById('stats');
+            statsDiv.innerHTML = `<div class="error">${message}</div>`;
+            
+            const listDiv = document.getElementById('property-list-content');
+            listDiv.innerHTML = `<div class="error">${message}</div>`;
+        }
+
+        // Simple, reliable initialization
+        // Wait for both DOM and Leaflet to be ready
+        function startApp() {
+            if (document.readyState === 'loading') {
+                // DOM not ready yet
+                document.addEventListener('DOMContentLoaded', startApp);
+                return;
+            }
+            
+            if (typeof L === 'undefined' || typeof L.map !== 'function') {
+                // Leaflet not ready yet, wait a bit
+                setTimeout(startApp, 100);
+                return;
+            }
+            
+            // Both DOM and Leaflet are ready
+            init();
+        }
+
+        // Start the application
+        startApp();
+    </script>
+</body>
+</html>
+

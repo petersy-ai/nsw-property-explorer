@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NSW Property Data - Basic Viewer</title>
+    <link rel="stylesheet" href="leaflet.css" />
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            background: #f0f0f0;
+        }
+        
+        .header {
+            background: #2c3e50;
+            color: white;
+            padding: 15px;
+            text-align: center;
+        }
+        
+        .stats {
+            background: white;
+            padding: 10px;
+            margin: 10px;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        
+        .stats span {
+            display: inline-block;
+            margin: 0 20px;
+            font-weight: bold;
+        }
+        
+        #map {
+            height: 600px;
+            margin: 10px;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .property-list {
+            background: white;
+            margin: 10px;
+            padding: 15px;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .property-item {
+            padding: 8px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+        }
+        
+        .property-item:hover {
+            background: #f8f9fa;
+        }
+        
+        .property-item.selected {
+            background: #e3f2fd;
+            border-left: 4px solid #2196f3;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 50px;
+            color: #666;
+        }
+        
+        .loading-progress {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: #f0f0f0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: #4caf50;
+            transition: width 0.3s ease;
+            width: 0%;
+        }
+        
+        .error {
+            background: #ffebee;
+            color: #c62828;
+            padding: 15px;
+            margin: 10px;
+            border-radius: 5px;
+            border-left: 4px solid #c62828;
+        }
+        
+        .retry-button {
+            background: #2196f3;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 10px;
+        }
+        
+        .retry-button:hover {
+            background: #1976d2;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>NSW Property Data - Basic Viewer</h1>
+        <p>Real NSW cadastral data for properties 50+ hectares, 100-400km from Sydney</p>
+    </div>
+    
+    <div class="stats" id="stats">
+        <div class="loading-progress">
+            <div>Loading data...</div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progress-fill"></div>
+            </div>
+            <div id="progress-text">Initializing...</div>
+        </div>
+    </div>
+    
+    <div id="map"></div>
+    
+    <div class="property-list">
+        <h3>Properties (Top 20 by Size)</h3>
+        <div id="property-list-content">
+            <div class="loading">Loading properties...</div>
+        </div>
+    </div>
+
+    <script src="leaflet.js"></script>
+    <script>
+        let map;
+        let properties = [];
+        let markers = [];
+        let selectedProperty = null;
+        let initialized = false;
+
+        // Progress tracking
+        function updateProgress(percent, text) {
+            const progressFill = document.getElementById('progress-fill');
+            const progressText = document.getElementById('progress-text');
+            
+            if (progressFill) {
+                progressFill.style.width = percent + '%';
+            }
+            if (progressText) {
+                progressText.textContent = text;
+            }
+            
+            console.log(`Progress: ${percent}% - ${text}`);
+        }
+
+        // Enhanced error handling
+        function showError(message, canRetry = true) {
+            console.error('Application error:', message);
+            
+            const statsDiv = document.getElementById('stats');
+            const listDiv = document.getElementById('property-list-content');
+            
+            const errorHtml = `
+                <div class="error">
+                    <strong>Error:</strong> ${message}
+                    ${canRetry ? '<br><button class="retry-button" onclick="retryInitialization()">Retry</button>' : ''}
+                </div>
+            `;
+            
+            statsDiv.innerHTML = errorHtml;
+            listDiv.innerHTML = errorHtml;
+        }
+
+        // Retry mechanism
+        function retryInitialization() {
+            console.log('Retrying initialization...');
+            initialized = false;
+            properties = [];
+            markers = [];
+            
+            // Reset UI
+            document.getElementById('stats').innerHTML = `
+                <div class="loading-progress">
+                    <div>Retrying data load...</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progress-fill"></div>
+                    </div>
+                    <div id="progress-text">Initializing...</div>
+                </div>
+            `;
+            
+            // Retry after short delay
+            setTimeout(init, 1000);
+        }
+
+        // Timeout wrapper for fetch
+        function fetchWithTimeout(url, timeout = 10000) {
+            return Promise.race([
+                fetch(url),
+                new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error(`Timeout after ${timeout}ms`)), timeout)
+                )
+            ]);
+        }
+
+        // Enhanced data loading with progress and error handling
+        async function loadData() {
+            try {
+                updateProgress(10, 'Connecting to data source...');
+                
+                console.log('Starting data load with timeout...');
+                const response = await fetchWithTimeout('properties.json', 15000);
+                
+                updateProgress(30, 'Data source connected...');
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                updateProgress(50, 'Downloading data...');
+                
+                // Check content type
+                const contentType = response.headers.get('content-type');
+                console.log('Content-Type:', contentType);
+                
+                if (!contentType || !contentType.includes('json')) {
+                    console.warn('Warning: Content-Type is not JSON:', contentType);
+                }
+                
+                updateProgress(70, 'Processing data...');
+                
+                // Parse JSON with timeout
+                const text = await response.text();
+                console.log(`Downloaded ${text.length} characters`);
+                
+                updateProgress(80, 'Parsing data...');
+                
+                try {
+                    properties = JSON.parse(text);
+                } catch (parseError) {
+                    console.error('JSON parse error:', parseError);
+                    throw new Error(`Invalid JSON data: ${parseError.message}`);
+                }
+                
+                updateProgress(90, 'Validating data...');
+                
+                console.log(`Loaded ${properties.length} properties`);
+                
+                if (!Array.isArray(properties) || properties.length === 0) {
+                    throw new Error('No properties found in data file');
+                }
+                
+                // Validate data structure
+                const firstProperty = properties[0];
+                const requiredFields = ['lat', 'lon', 'area', 'distance'];
+                const missingFields = requiredFields.filter(field => !(field in firstProperty));
+                
+                if (missingFields.length > 0) {
+                    throw new Error(`Missing required fields: ${missingFields.join(', ')}`);
+                }
+                
+                updateProgress(100, 'Data loaded successfully!');
+                console.log('Data validation passed');
+                
+            } catch (error) {
+                console.error('Data loading error:', error);
+                updateProgress(0, 'Data loading failed');
+                throw error;
+            }
+        }
+
+        // Initialize the map
+        function initMap() {
+            try {
+                updateProgress(20, 'Initializing map...');
+                
+                // Create map centered on NSW
+                map = L.map('map').setView([-32.0, 152.0], 7);
+                
+                updateProgress(40, 'Loading map tiles...');
+                
+                // Add OpenStreetMap tiles
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '© OpenStreetMap contributors',
+                    timeout: 10000
+                }).addTo(map);
+                
+                updateProgress(60, 'Adding reference markers...');
+                
+                // Add Sydney marker for reference
+                L.marker([-33.8688, 151.2093])
+                    .addTo(map)
+                    .bindPopup('<b>Sydney CBD</b><br>Reference point for distances');
+                
+                updateProgress(80, 'Map initialized');
+                console.log('Map initialization complete');
+                
+            } catch (error) {
+                console.error('Map initialization error:', error);
+                throw new Error(`Map initialization failed: ${error.message}`);
+            }
+        }
+
+        // Add property markers to map
+        function addMarkersToMap() {
+            try {
+                updateProgress(10, 'Adding property markers...');
+                console.log('Adding markers to map...');
+                
+                // Clear existing markers
+                markers.forEach(marker => map.removeLayer(marker));
+                markers = [];
+                
+                const totalProperties = Math.min(properties.length, 100); // Limit for performance
+                
+                // Create markers for properties (limit to 100 for performance)
+                properties.slice(0, totalProperties).forEach((property, index) => {
+                    try {
+                        // Update progress periodically
+                        if (index % 10 === 0) {
+                            const percent = Math.round((index / totalProperties) * 80) + 10;
+                            updateProgress(percent, `Adding markers... ${index + 1}/${totalProperties}`);
+                        }
+                        
+                        // Color code by size
+                        let color = 'blue';
+                        if (property.area >= 500) color = 'red';
+                        else if (property.area >= 200) color = 'orange';
+                        else if (property.area >= 100) color = 'green';
+                        
+                        const marker = L.circleMarker([property.lat, property.lon], {
+                            radius: Math.min(8, Math.max(3, property.area / 100)),
+                            fillColor: color,
+                            color: 'white',
+                            weight: 1,
+                            opacity: 1,
+                            fillOpacity: 0.7
+                        });
+                        
+                        // Add popup with property info
+                        marker.bindPopup(`
+                            <b>Property #${property.rank || index + 1}</b><br>
+                            <strong>Size:</strong> ${property.area} hectares<br>
+                            <strong>Distance:</strong> ${property.distance} km from Sydney<br>
+                            ${property.lganame ? `<strong>LGA:</strong> ${property.lganame}<br>` : ''}
+                        `);
+                        
+                        // Add click handler
+                        marker.on('click', () => selectProperty(property, index));
+                        
+                        marker.addTo(map);
+                        markers.push(marker);
+                        
+                    } catch (error) {
+                        console.error(`Error creating marker for property ${index}:`, error);
+                    }
+                });
+                
+                updateProgress(90, 'Fitting map bounds...');
+                
+                console.log(`Added ${markers.length} markers to map`);
+                
+                // Fit map to show all properties
+                if (markers.length > 0) {
+                    const group = new L.featureGroup(markers);
+                    map.fitBounds(group.getBounds().pad(0.1));
+                }
+                
+                updateProgress(100, 'Map ready!');
+                
+            } catch (error) {
+                console.error('Error adding markers:', error);
+                throw new Error(`Failed to add markers: ${error.message}`);
+            }
+        }
+
+        // Update statistics display
+        function updateStats() {
+            try {
+                const statsDiv = document.getElementById('stats');
+                
+                if (properties.length === 0) {
+                    statsDiv.innerHTML = '<div class="error">No properties loaded</div>';
+                    return;
+                }
+                
+                const totalProperties = properties.length;
+                const avgArea = (properties.reduce((sum, p) => sum + p.area, 0) / totalProperties).toFixed(1);
+                const avgDistance = (properties.reduce((sum, p) => sum + p.distance, 0) / totalProperties).toFixed(1);
+                const maxArea = Math.max(...properties.map(p => p.area)).toFixed(1);
+                const minArea = Math.min(...properties.map(p => p.area)).toFixed(1);
+                
+                statsDiv.innerHTML = `
+                    <span>Total Properties: ${totalProperties}</span>
+                    <span>Size Range: ${minArea} - ${maxArea} ha</span>
+                    <span>Avg Size: ${avgArea} ha</span>
+                    <span>Avg Distance: ${avgDistance} km</span>
+                `;
+                
+                console.log('Statistics updated successfully');
+                
+            } catch (error) {
+                console.error('Error updating statistics:', error);
+            }
+        }
+
+        // Update property list
+        function updatePropertyList() {
+            try {
+                const listDiv = document.getElementById('property-list-content');
+                
+                if (properties.length === 0) {
+                    listDiv.innerHTML = '<div class="error">No properties to display</div>';
+                    return;
+                }
+                
+                // Show top 20 properties by size
+                const topProperties = properties.slice(0, 20);
+                
+                listDiv.innerHTML = topProperties.map((property, index) => `
+                    <div class="property-item" onclick="selectProperty(${JSON.stringify(property).replace(/"/g, '&quot;')}, ${index})" id="property-${index}">
+                        <strong>#${property.rank || index + 1}</strong> - 
+                        ${property.area} hectares, 
+                        ${property.distance} km from Sydney
+                        ${property.lganame ? `<br><small>LGA: ${property.lganame}</small>` : ''}
+                    </div>
+                `).join('');
+                
+                console.log('Property list updated successfully');
+                
+            } catch (error) {
+                console.error('Error updating property list:', error);
+            }
+        }
+
+        // Select a property
+        function selectProperty(property, index) {
+            try {
+                console.log('Selected property:', property);
+                
+                selectedProperty = property;
+                
+                // Update UI
+                document.querySelectorAll('.property-item').forEach(item => {
+                    item.classList.remove('selected');
+                });
+                
+                const propertyElement = document.getElementById(`property-${index}`);
+                if (propertyElement) {
+                    propertyElement.classList.add('selected');
+                }
+                
+                // Center map on property
+                if (map) {
+                    map.setView([property.lat, property.lon], 12);
+                    
+                    // Open popup for the corresponding marker
+                    const marker = markers[index];
+                    if (marker) {
+                        marker.openPopup();
+                    }
+                }
+                
+            } catch (error) {
+                console.error('Error selecting property:', error);
+            }
+        }
+
+        // Main initialization function
+        async function init() {
+            if (initialized) {
+                console.log('Application already initialized, skipping...');
+                return;
+            }
+            
+            try {
+                console.log('Starting application initialization...');
+                updateProgress(0, 'Starting initialization...');
+                
+                // Check if Leaflet is available
+                if (typeof L === 'undefined' || typeof L.map !== 'function') {
+                    throw new Error('Leaflet library not available');
+                }
+                
+                console.log('Leaflet available, version:', L.version);
+                initialized = true;
+                
+                // Load data first
+                await loadData();
+                
+                // Initialize map
+                initMap();
+                
+                // Add markers
+                addMarkersToMap();
+                
+                // Update displays
+                updateStats();
+                updatePropertyList();
+                
+                console.log('Initialization complete!');
+                
+            } catch (error) {
+                console.error('Initialization error:', error);
+                initialized = false;
+                showError(error.message, true);
+            }
+        }
+
+        // Robust startup sequence
+        function startApp() {
+            console.log('Starting application...');
+            
+            // Check DOM readiness
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', startApp);
+                return;
+            }
+            
+            // Check Leaflet availability
+            if (typeof L === 'undefined' || typeof L.map !== 'function') {
+                console.log('Leaflet not ready, waiting...');
+                setTimeout(startApp, 100);
+                return;
+            }
+            
+            // Start initialization
+            init();
+        }
+
+        // Global error handler
+        window.addEventListener('error', function(event) {
+            console.error('Global error:', event.error);
+            if (!initialized) {
+                showError(`Unexpected error: ${event.error?.message || 'Unknown error'}`, true);
+            }
+        });
+
+        // Start the application
+        startApp();
+    </script>
+</body>
+</html>
+
